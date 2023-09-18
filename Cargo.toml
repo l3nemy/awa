@@ -1,0 +1,27 @@
+[package]
+name = "awa"
+version = "0.1.0"
+edition = "2021"
+
+
+[dependencies]
+winit = { version = "0.28", features = ["serde"] }
+winit_input_helper = "0.14"
+cpal = "0.15"
+pixels = "0.13"
+image = "0.24"
+
+cfg-if = "1"
+
+thiserror = "1"
+
+[target.'cfg(windows)'.dependencies]
+winapi = "0.3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
+core-graphics = "0.23"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11 = "2.20"
+wayland-client = "0.31"
