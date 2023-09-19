@@ -15,7 +15,7 @@ An animated cross-platform wallpaper manager
 
 ## Dependencies
 
-- [GStreamer](https://gstreamer.freedesktop.org/)
+- [GStreamer](https://gstreamer.freedesktop.org/) : Tested on 1.22.5
 
 ## Build
 

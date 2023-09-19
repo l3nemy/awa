@@ -14,7 +14,13 @@ image = "0.24"
 cfg-if = "1"
 
 thiserror = "1"
-gstreamer-video = "0.21"
+
+
+anyhow = "1"
+gst = { package = "gstreamer", version = "0.21" }
+gst-app = { package = "gstreamer-app", version = "0.21" }
+gst-video = { package = "gstreamer-video", version = "0.21" }
+gst-audio = { package = "gstreamer-audio", version = "0.21" }
 
 [target.'cfg(windows)'.dependencies]
 winapi = "0.3"
