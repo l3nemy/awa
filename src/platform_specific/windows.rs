@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use winapi::um::winuser::{GetDesktopWindow, SetParent};
-use winit::platform::windows::WindowExtWindows;
+use winit::{platform::windows::WindowExtWindows, window::Window};
 
 pub(crate) fn set_desktop_window(window: &Window) {
     unsafe {
