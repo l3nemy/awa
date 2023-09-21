@@ -1,10 +1,11 @@
 use winit::{
+    dpi::{LogicalPosition, Position},
     event::{Event, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::{Window, WindowBuilder},
 };
 
-use crate::{app::App, platform_specific};
+use crate::{app::App, frame_mgr::FrameManager, platform_specific};
 
 pub(crate) struct MainLoop {
     // TODO: Add user event
@@ -12,13 +13,16 @@ pub(crate) struct MainLoop {
 
     window: Window,
 
+    frame_mgr: FrameManager,
+
     app: App,
 
     input_helper: winit_input_helper::WinitInputHelper,
 }
 
 impl MainLoop {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(framerate: f64) -> Self {
+        //let event_loop = EventLoopBuilder::<Message>::with_user_event().build();
         let event_loop = EventLoop::new();
 
         //TODO: Multiple monitor support
@@ -32,8 +36,11 @@ impl MainLoop {
             .with_decorations(false)
             .with_active(false)
             .with_title("Awa Desktop")
+            .with_position(Position::Logical(LogicalPosition::new(0., 0.)))
+            .with_window_level(winit::window::WindowLevel::AlwaysOnBottom)
             .build(&event_loop)
             .unwrap();
+
         platform_specific::set_desktop_window(&window);
 
         let app = App::new(&window);
@@ -42,6 +49,7 @@ impl MainLoop {
         Self {
             event_loop,
             window,
+            frame_mgr: FrameManager::new(framerate),
             app,
             input_helper,
         }
@@ -50,12 +58,31 @@ impl MainLoop {
     pub(crate) fn run(self) -> ! {
         let Self {
             event_loop,
-            window,
-            mut app,
+            window: _window,
+            mut frame_mgr,
+            app,
             input_helper: mut input,
         } = self;
 
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        //let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Event<'static, ()>>();
+
+        let app_ref = app.clone();
+
+        runtime.spawn(async move {
+            loop {
+                if !frame_mgr.next_frame(&app_ref) {
+                    panic!("Failed to render");
+                }
+            }
+        });
+
         event_loop.run(move |event, _, control_flow| {
+            *control_flow = ControlFlow::Poll;
             if input.update(&event) {
                 if input.close_requested() || input.key_pressed(VirtualKeyCode::Escape) {
                     *control_flow = ControlFlow::Exit;
@@ -75,34 +102,26 @@ impl MainLoop {
                 }
 
                 //TODO: Handle keyboard, mouse event
-
-                window.request_redraw();
+                app.update();
+                //app.handle_input(&event);
+                //window.request_redraw();
             }
 
-            app.handle_input(&event);
-
             #[allow(clippy::collapsible_match)]
-            match event {
+            #[allow(clippy::single_match)]
+            match &event {
                 Event::WindowEvent { event, .. } => {
                     //TODO: Handle egui input
 
                     if let WindowEvent::CloseRequested = event {
-                        *control_flow = winit::event_loop::ControlFlow::Exit;
-                    }
-                }
-
-                Event::MainEventsCleared => {
-                    window.request_redraw();
-                }
-
-                Event::RedrawRequested(_) => {
-                    if let Err(e) = app.render() {
-                        eprintln!("app.render() failed: {}", e);
                         *control_flow = ControlFlow::Exit;
                     }
                 }
-                _ => *control_flow = ControlFlow::Poll,
+                Event::MainEventsCleared => {
+                    app.update();
+                }
+                _ => {}
             }
-        });
+        })
     }
 }
