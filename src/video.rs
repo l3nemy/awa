@@ -3,6 +3,7 @@ use std::sync::{
     Arc, Mutex,
 };
 
+use cfg_if::cfg_if;
 use gst::{element_error, prelude::*, ElementFactory, Fraction, GhostPad};
 use gst_app::AppSinkCallbacks;
 use gst_video::VideoCapsBuilder;
@@ -150,8 +151,24 @@ impl Video {
 
         let size = size.into();
 
-        Self::enable_factory("vtdec_hw", true);
-        Self::enable_factory("vp8dec", false);
+        cfg_if! {
+            if #[cfg(target_os = "macos")] {
+                Self::enable_factory("vtdec", true);
+            } else if #[cfg(target_os = "windows")] {
+                Self::enable_factory("d3d11dec", true);
+            } else if #[cfg(target_os = "linux")] {
+                Self::enable_factory("vaapih264dec", true);
+                Self::enable_factory("vaapivp8dec", true);
+                Self::enable_factory("vaapivp9dec", true);
+                Self::enable_factory("vaapijpegdec", true);
+                Self::enable_factory("vaapimpeg2dec", true);
+                Self::enable_factory("vaapimpeg4dec", true);
+                Self::enable_factory("vaapih265dec", true);
+                Self::enable_factory("vaapivc1dec", true);
+                Self::enable_factory("vaapiav1dec", true);
+                Self::enable_factory("vaapipostproc", true);
+            }
+        }
 
         let (pipeline, pad, appsink) = Self::create_pipeline(
             //"file:///Users/leejihyek1267/Downloads/sample.mp4",
