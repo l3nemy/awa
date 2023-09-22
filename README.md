@@ -23,8 +23,8 @@ Install all of dependencies before building.
 
 MSRV (Minimum Supported Rust Version): 1.70 (Rust 2021)
 
-```
-$ git clone https://github.com/l3nemy/awa.git
-$ cd awa
-$ cargo build --release
+```sh
+git clone https://github.com/l3nemy/awa.git
+cd awa
+cargo build --release
 ```
