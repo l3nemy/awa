@@ -1,13 +1,5 @@
 # TODO
 
-- [ ] Cross-platform support
-
-  - [ ] Windows
-  - [ ] macOS
-  - [ ] Linux
-    - [ ] X11
-    - [ ] Wayland
-
 - [ ] Support for multiple monitors
 - [ ] Compatibility for wallpaper engine pkg
 
@@ -16,8 +8,10 @@
   - [ ] Replace some `.unwrap()`
 
 - [ ] Implement set_desktop_window
-  - [ ] Windows
-  - [ ] macOS
+  - [x] Windows
+  - [x] macOS
   - [ ] Linux
     - [ ] X11
     - [ ] Wayland
+  
+- [ ] Resolve framedrop issue [#1](https://github.com/l3nemy/awa/issues/1)
