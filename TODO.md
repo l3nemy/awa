@@ -3,7 +3,7 @@
 - [ ] Cross-platform support
 
   - [ ] Windows
-  - [ ] MacOS
+  - [ ] macOS
   - [ ] Linux
     - [ ] X11
     - [ ] Wayland
@@ -14,3 +14,10 @@
 - [ ] Handle errors
   - [ ] Make custom error objects
   - [ ] Replace some `.unwrap()`
+
+- [ ] Implement set_desktop_window
+  - [ ] Windows
+  - [ ] macOS
+  - [ ] Linux
+    - [ ] X11
+    - [ ] Wayland
