@@ -8,7 +8,6 @@ use winit::{
 use crate::{app::App, frame_mgr::FrameManager, platform_specific};
 
 pub(crate) struct MainLoop {
-    // TODO: Add user event
     event_loop: EventLoop<()>,
 
     window: Window,

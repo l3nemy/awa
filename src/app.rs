@@ -65,7 +65,7 @@ impl AppInner {
         *self.scale_factor.lock().unwrap() = scale_factor;
     }
 
-    // TODO: remove this mut
+    // TODO(l3nemy): remove this mut
     pub(crate) fn handle_input<T>(&mut self, event: &Event<T>) {
         if self.input_helper.update(event) {
             self.update();
