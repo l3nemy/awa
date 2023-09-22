@@ -37,18 +37,19 @@ impl Drop for Video {
 //unsafe impl Send for Video {}
 
 impl Video {
-    fn enable_factory(name: &str, enable: bool) {
+    fn enable_factory(name: &str, enable: bool) -> bool {
         let registry = gst::Registry::get();
-        let factory = ElementFactory::find(name)
-            .unwrap()
-            .upcast::<gst::PluginFeature>();
-        if enable {
-            factory.set_rank(gst::Rank::Primary + 4);
+        if let Some(factory) = ElementFactory::find(name) {
+            let factory = factory.upcast::<gst::PluginFeature>();
+            if enable {
+                factory.set_rank(gst::Rank::Primary + 4);
+            } else {
+                factory.set_rank(gst::Rank::None);
+            }
+            registry.add_feature(&factory).is_ok()
         } else {
-            factory.set_rank(gst::Rank::None);
+            false
         }
-
-        registry.add_feature(&factory).unwrap()
     }
 
     fn create_pipeline<S>(
@@ -154,8 +155,15 @@ impl Video {
         cfg_if! {
             if #[cfg(target_os = "macos")] {
                 Self::enable_factory("vtdec", true);
+
             } else if #[cfg(target_os = "windows")] {
-                Self::enable_factory("d3d11dec", true);
+                Self::enable_factory("d3d11h264dec", true);
+                Self::enable_factory("d3d11h265dec", true);
+                Self::enable_factory("d3d11vp8dec", true);
+                Self::enable_factory("d3d11vp9dec", true);
+                Self::enable_factory("d3d11mpeg2dec", true);
+                Self::enable_factory("d3d11av1dec", true);
+
             } else if #[cfg(target_os = "linux")] {
                 Self::enable_factory("vaapih264dec", true);
                 Self::enable_factory("vaapivp8dec", true);
@@ -171,7 +179,6 @@ impl Video {
         }
 
         let (pipeline, pad, appsink) = Self::create_pipeline(
-            //"file:///Users/leejihyek1267/Downloads/sample.mp4",
             "https://gstreamer.freedesktop.org/media/sintel_trailer-480p.webm",
             size,
         )
@@ -184,14 +191,9 @@ impl Video {
         let need_render = Arc::new(AtomicBool::new(false));
         let need_render_ref = need_render.clone();
 
-        let instant = Mutex::new(std::time::Instant::now());
         appsink.set_callbacks(
             AppSinkCallbacks::builder()
                 .new_sample(move |appsink| {
-                    let mut instant_ref = instant.lock().unwrap();
-                    println!("Elapsed: {:?}", instant_ref.elapsed());
-                    *instant_ref = std::time::Instant::now();
-
                     let sample = appsink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
 
                     let _info = sample
@@ -262,6 +264,7 @@ impl Video {
                         self.rewind()?;
                     }
                 }
+                // TODO(l3nemy): Handle error(Connection closed)
                 Error(e) => Err(anyhow::anyhow!(
                     "Error from {:?}: {} ({:?})",
                     e.src().map(|s| s.path_string()),
