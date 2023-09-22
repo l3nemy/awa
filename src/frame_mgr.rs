@@ -17,19 +17,18 @@ impl FrameManager {
         }
     }
 
-    pub(crate) fn next_frame(&mut self, app: &App) -> bool {
+    pub(crate) async fn next_frame(&mut self, app: &App) -> bool {
         self.current_instant = std::time::Instant::now();
         let time_delta = self.current_instant - self.previous_instant;
 
         self.accumulated += time_delta;
 
         if self.accumulated >= self.target {
-            app.update();
+            app.update().await;
 
             self.accumulated -= self.target;
         }
-
-        if let Err(e) = app.render() {
+        if let Err(e) = app.render().await {
             eprintln!("Error rendering: {}", e);
             return false;
         }

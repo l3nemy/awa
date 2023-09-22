@@ -1,7 +1,6 @@
-use std::{
-    ops::Deref,
-    sync::{Arc, Mutex},
-};
+use std::{ops::Deref, sync::Arc};
+
+use tokio::sync::Mutex;
 
 use pixels::{Pixels, PixelsBuilder, SurfaceTexture};
 use winit::{dpi::PhysicalSize, event::Event, window::Window};
@@ -30,7 +29,7 @@ impl Deref for App {
 }
 
 pub(crate) struct AppInner {
-    input_helper: WinitInputHelper,
+    input_helper: Mutex<WinitInputHelper>,
 
     pixels: Mutex<Pixels>,
 
@@ -43,32 +42,32 @@ pub(crate) struct AppInner {
 }
 
 impl AppInner {
-    pub(crate) fn update_surface_size<S>(&self, size: S) -> Result<(), anyhow::Error>
+    pub(crate) async fn update_surface_size<S>(&self, size: S) -> Result<(), anyhow::Error>
     where
         S: Into<PhysicalSize<u32>>,
     {
         let size: PhysicalSize<u32> = size.into();
-        *self.size.lock().unwrap() = size;
-        self.video.lock().unwrap().update_surface_size(size)?;
-        self.pixels
-            .lock()
-            .unwrap()
+
+        let (mut s, mut video, mut pixels) =
+            tokio::join![self.size.lock(), self.video.lock(), self.pixels.lock()];
+        *s = size;
+        video.update_surface_size(size)?;
+        pixels
             .resize_surface(size.width, size.height)
             .map_err(anyhow::Error::from)
     }
 
-    pub(crate) fn update(&self) {
-        self.video.lock().unwrap().update().unwrap();
+    pub(crate) async fn update(&self) {
+        self.video.lock().await.update().unwrap();
     }
 
-    pub(crate) fn update_scale_factor(&self, scale_factor: f64) {
-        *self.scale_factor.lock().unwrap() = scale_factor;
+    pub(crate) async fn update_scale_factor(&self, scale_factor: f64) {
+        *self.scale_factor.lock().await = scale_factor;
     }
 
-    // TODO(l3nemy): remove this mut
-    pub(crate) fn handle_input<T>(&mut self, event: &Event<T>) {
-        if self.input_helper.update(event) {
-            self.update();
+    pub(crate) async fn handle_input<'e, T>(&self, event: &Event<'e, T>) {
+        if self.input_helper.lock().await.update(event) {
+            self.update().await;
         }
     }
 }
@@ -92,7 +91,7 @@ impl App {
 
         Self {
             _inner: Arc::new(AppInner {
-                input_helper: WinitInputHelper::new(),
+                input_helper: Mutex::new(WinitInputHelper::new()),
                 pixels: Mutex::new(pixels),
                 video: Mutex::new(video),
                 size: Mutex::new(size),
@@ -101,7 +100,7 @@ impl App {
         }
     }
 
-    pub(crate) fn render(&self) -> Result<(), pixels::Error> {
+    pub(crate) async fn render(&self) -> Result<(), pixels::Error> {
         /*
         let frame = self.pixels.frame_mut();
         for (i, pixel) in frame.chunks_exact_mut(4).enumerate() {
@@ -110,8 +109,9 @@ impl App {
 
             pixel.copy_from_slice(&[(x % 256) as u8, (y % 256) as u8, 0, 255]);
         }*/
-        let mut pixels = self._inner.pixels.lock().unwrap();
-        let video = self._inner.video.lock().unwrap();
+
+        let (mut pixels, video) =
+            tokio::join![self._inner.pixels.lock(), self._inner.video.lock(),];
 
         if video.render(pixels.frame_mut()) {
             pixels.render_with(|encoder, render_target, ctx| {

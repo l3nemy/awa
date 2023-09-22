@@ -1,14 +1,21 @@
 use winit::{
     dpi::{LogicalPosition, Position},
     event::{Event, VirtualKeyCode, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
     window::{Window, WindowBuilder},
 };
 
 use crate::{app::App, frame_mgr::FrameManager, platform_specific};
 
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Message {
+    Quit,
+
+}
+
 pub(crate) struct MainLoop {
-    event_loop: EventLoop<()>,
+    event_loop: EventLoop<Message>,
 
     window: Window,
 
@@ -21,8 +28,7 @@ pub(crate) struct MainLoop {
 
 impl MainLoop {
     pub(crate) fn new(framerate: f64) -> Self {
-        //let event_loop = EventLoopBuilder::<Message>::with_user_event().build();
-        let event_loop = EventLoop::new();
+        let event_loop = EventLoopBuilder::<Message>::with_user_event().build();
 
         //TODO: Multiple monitor support
         let monitor = event_loop
@@ -57,7 +63,7 @@ impl MainLoop {
     pub(crate) fn run(self) -> ! {
         let Self {
             event_loop,
-            window: _window,
+            window,
             mut frame_mgr,
             app,
             input_helper: mut input,
@@ -68,14 +74,47 @@ impl MainLoop {
             .build()
             .unwrap();
 
-        //let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Event<'static, ()>>();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Event<'static, Message>>();
 
         let app_ref = app.clone();
 
         runtime.spawn(async move {
             loop {
-                if !frame_mgr.next_frame(&app_ref) {
+                if !frame_mgr.next_frame(&app_ref).await {
                     panic!("Failed to render");
+                }
+            }
+        });
+
+        let app_ref2 = app.clone();
+        let event_loop_proxy = event_loop.create_proxy();
+
+        runtime.spawn(async move {
+            loop {
+                if let Some(event) = rx.recv().await {
+                    app_ref2.handle_input(&event).await;
+                    match event {
+                        Event::WindowEvent { event, .. } => match &event {
+                            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                                app_ref2.update_scale_factor(*scale_factor).await;
+                            }
+
+                            WindowEvent::Resized(size) => {
+                                if let Err(e) = app_ref2.update_surface_size(*size).await {
+                                    eprintln!("Error resizing: {}", e);
+                                    event_loop_proxy.send_event(Message::Quit).unwrap();
+                                }
+                            }
+
+                            _ => {}
+                        },
+
+                        Event::MainEventsCleared => {
+                            app_ref2.update().await;
+                        }
+
+                        _ => {}
+                    }
                 }
             }
         });
@@ -88,22 +127,7 @@ impl MainLoop {
                     return;
                 }
 
-                if let Some(new_scale_factor) = input.scale_factor_changed() {
-                    app.update_scale_factor(new_scale_factor);
-                }
-
-                if let Some(s) = input.window_resized() {
-                    if let Err(e) = app.update_surface_size(s) {
-                        eprintln!("pixels.resize_surface() failed: {}", e);
-                        *control_flow = ControlFlow::Exit;
-                        return;
-                    }
-                }
-
-                //TODO: Handle keyboard, mouse event
-                app.update();
-                //app.handle_input(&event);
-                //window.request_redraw();
+                window.request_redraw();
             }
 
             #[allow(clippy::collapsible_match)]
@@ -116,11 +140,14 @@ impl MainLoop {
                         *control_flow = ControlFlow::Exit;
                     }
                 }
-                Event::MainEventsCleared => {
-                    app.update();
+
+                Event::UserEvent(Message::Quit) => {
+                    *control_flow = ControlFlow::Exit;
                 }
+
                 _ => {}
             }
+            tx.send(event.to_static().unwrap()).unwrap();
         })
     }
 }
