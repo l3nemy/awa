@@ -10,3 +10,7 @@
 
 - [ ] Support for multiple monitors
 - [ ] Compatibility for wallpaper engine pkg
+
+- [ ] Handle errors
+  - [ ] Make custom error objects
+  - [ ] Replace some `.unwrap()`
