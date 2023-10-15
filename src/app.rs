@@ -1,4 +1,4 @@
-use std::{ops::Deref, sync::Arc};
+use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
@@ -9,7 +9,7 @@ use winit_input_helper::WinitInputHelper;
 use crate::video::Video;
 
 pub(crate) struct App {
-    _inner: Arc<AppInner>,
+    _inner: Arc<Mutex<AppInner>>,
 }
 
 impl Clone for App {
@@ -20,54 +20,55 @@ impl Clone for App {
     }
 }
 
-impl Deref for App {
-    type Target = AppInner;
-
-    fn deref(&self) -> &Self::Target {
-        &self._inner
-    }
-}
-
 pub(crate) struct AppInner {
-    input_helper: Mutex<WinitInputHelper>,
+    input_helper: WinitInputHelper,
 
-    pixels: Mutex<Pixels>,
+    pixels: Pixels,
 
-    video: Mutex<Video>,
-
-    size: Mutex<PhysicalSize<u32>>,
+    video: Video,
 
     // TODO: Use scale factor for HIDPI
-    scale_factor: Mutex<f64>,
+    scale_factor: f64,
 }
 
 impl AppInner {
-    pub(crate) async fn update_surface_size<S>(&self, size: S) -> Result<(), anyhow::Error>
+    pub(crate) fn render(&mut self) -> Result<(), pixels::Error> {
+        if self.video.render(self.pixels.frame_mut()) {
+            self.pixels.render_with(|encoder, render_target, ctx| {
+                ctx.scaling_renderer.render(encoder, render_target);
+                Ok(())
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    #[inline]
+    pub(crate) fn update(&mut self) {
+        self.video.update().unwrap();
+    }
+
+    pub(crate) async fn update_surface_size<S>(&mut self, size: S) -> Result<(), anyhow::Error>
     where
         S: Into<PhysicalSize<u32>>,
     {
         let size: PhysicalSize<u32> = size.into();
 
-        let (mut s, mut video, mut pixels) =
-            tokio::join![self.size.lock(), self.video.lock(), self.pixels.lock()];
-        *s = size;
-        video.update_surface_size(size)?;
-        pixels
+        self.video.update_surface_size(size)?;
+        self.pixels
             .resize_surface(size.width, size.height)
             .map_err(anyhow::Error::from)
     }
 
-    pub(crate) async fn update(&self) {
-        self.video.lock().await.update().unwrap();
+    #[inline]
+    pub(crate) fn update_scale_factor(&mut self, scale_factor: f64) {
+        self.scale_factor = scale_factor;
     }
 
-    pub(crate) async fn update_scale_factor(&self, scale_factor: f64) {
-        *self.scale_factor.lock().await = scale_factor;
-    }
-
-    pub(crate) async fn handle_input<'e, T>(&self, event: &Event<'e, T>) {
-        if self.input_helper.lock().await.update(event) {
-            self.update().await;
+    #[inline]
+    pub(crate) async fn handle_input<'e, T>(&mut self, event: &Event<'e, T>) {
+        if self.input_helper.update(event) {
+            self.update();
         }
     }
 }
@@ -90,36 +91,45 @@ impl App {
         let video = Video::new(size).unwrap();
 
         Self {
-            _inner: Arc::new(AppInner {
-                input_helper: Mutex::new(WinitInputHelper::new()),
-                pixels: Mutex::new(pixels),
-                video: Mutex::new(video),
-                size: Mutex::new(size),
-                scale_factor: Mutex::new(window.scale_factor()),
-            }),
+            _inner: Arc::new(Mutex::new(AppInner {
+                input_helper: WinitInputHelper::new(),
+                pixels,
+                video,
+                scale_factor: window.scale_factor(),
+            })),
         }
     }
 
+    #[inline]
+    async fn inner(&self) -> tokio::sync::MutexGuard<'_, AppInner> {
+        self._inner.lock().await
+    }
+
+    #[inline]
     pub(crate) async fn render(&self) -> Result<(), pixels::Error> {
-        /*
-        let frame = self.pixels.frame_mut();
-        for (i, pixel) in frame.chunks_exact_mut(4).enumerate() {
-            let x = (i % self.size.width as usize) as i32;
-            let y = (i / self.size.width as usize) as i32;
+        self.inner().await.render()
+    }
 
-            pixel.copy_from_slice(&[(x % 256) as u8, (y % 256) as u8, 0, 255]);
-        }*/
+    #[inline]
+    pub(crate) async fn update(&self) {
+        self.inner().await.update();
+    }
 
-        let (mut pixels, video) =
-            tokio::join![self._inner.pixels.lock(), self._inner.video.lock(),];
+    #[inline]
+    pub(crate) async fn update_surface_size<S>(&self, size: S) -> Result<(), anyhow::Error>
+    where
+        S: Into<PhysicalSize<u32>>,
+    {
+        self.inner().await.update_surface_size(size).await
+    }
 
-        if video.render(pixels.frame_mut()) {
-            pixels.render_with(|encoder, render_target, ctx| {
-                ctx.scaling_renderer.render(encoder, render_target);
-                Ok(())
-            })
-        } else {
-            Ok(())
-        }
+    #[inline]
+    pub(crate) async fn update_scale_factor(&self, scale_factor: f64) {
+        self.inner().await.update_scale_factor(scale_factor);
+    }
+
+    #[inline]
+    pub(crate) async fn handle_input<'e, T>(&self, event: &Event<'e, T>) {
+        self.inner().await.handle_input(event).await;
     }
 }

@@ -7,11 +7,9 @@ use winit::{
 
 use crate::{app::App, frame_mgr::FrameManager, platform_specific};
 
-
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Message {
     Quit,
-
 }
 
 pub(crate) struct MainLoop {
@@ -73,6 +71,7 @@ impl MainLoop {
             .enable_all()
             .build()
             .unwrap();
+        let _ = runtime.enter();
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Event<'static, Message>>();
 
@@ -120,7 +119,6 @@ impl MainLoop {
         });
 
         event_loop.run(move |event, _, control_flow| {
-            *control_flow = ControlFlow::Poll;
             if input.update(&event) {
                 if input.close_requested() || input.key_pressed(VirtualKeyCode::Escape) {
                     *control_flow = ControlFlow::Exit;

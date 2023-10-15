@@ -8,5 +8,5 @@ mod platform_specific;
 mod video;
 
 fn main() {
-    MainLoop::new(30.).run();
+    MainLoop::new(60.).run();
 }

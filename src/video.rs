@@ -1,6 +1,6 @@
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc,
 };
 
 use cfg_if::cfg_if;
@@ -25,7 +25,7 @@ pub(crate) struct Video {
 
     need_render: Arc<AtomicBool>,
 
-    frame: Arc<Mutex<Vec<u8>>>,
+    frame_rx: tokio::sync::watch::Receiver<Option<Vec<u8>>>,
 }
 
 impl Drop for Video {
@@ -37,113 +37,6 @@ impl Drop for Video {
 //unsafe impl Send for Video {}
 
 impl Video {
-    fn enable_factory(name: &str, enable: bool) -> bool {
-        let registry = gst::Registry::get();
-        if let Some(factory) = ElementFactory::find(name) {
-            let factory = factory.upcast::<gst::PluginFeature>();
-            if enable {
-                factory.set_rank(gst::Rank::Primary + 4);
-            } else {
-                factory.set_rank(gst::Rank::None);
-            }
-            registry.add_feature(&factory).is_ok()
-        } else {
-            false
-        }
-    }
-
-    fn create_pipeline<S>(
-        uri: &str,
-        size: S,
-    ) -> Result<(gst::Pipeline, gst::Pad, gst_app::AppSink), anyhow::Error>
-    where
-        S: Into<PhysicalSize<u32>>,
-    {
-        let size: PhysicalSize<u32> = size.into();
-
-        // {playbin} -> {sinkbin} ({aspectratiocrop} -> {videoconvertscale} -> {videorate} -> {appsink})
-
-        // playbin uri={uri} video-sink="aspectratiocrop aspect-ratio={width}/{height} ! videoconvertscale ! videorate ! appsink" audio-sink="autoaudiosink"
-
-        let playbin = ElementFactory::make("playbin")
-            .property("uri", uri)
-            .build()?
-            .downcast::<gst::Pipeline>()
-            .unwrap();
-
-        let audiosink = ElementFactory::make("autoaudiosink").build()?;
-
-        let sinkbin = gst::Bin::builder().name("sinkbin").build();
-
-        let caps = VideoCapsBuilder::new()
-            //.framerate(Fraction::from(60))
-            .width(size.width as _)
-            .height(size.height as _)
-            .format(gst_video::VideoFormat::Rgba)
-            .build();
-
-        let aspectratiocrop = ElementFactory::make("aspectratiocrop")
-            .property(
-                "aspect-ratio",
-                Fraction::new(size.width as _, size.height as _),
-            )
-            .build()?;
-        let videoconvertscale = ElementFactory::make("videoconvertscale").build()?;
-        let videorate = ElementFactory::make("videorate").build()?;
-
-        let fpsdisplaysink = ElementFactory::make("fpsdisplaysink").build()?;
-
-        let appsink = gst_app::AppSink::builder()
-            .enable_last_sample(true)
-            .caps(&caps)
-            .async_(true)
-            .sync(true)
-            .build()
-            .upcast::<gst::Element>();
-
-        let capsframerate = ElementFactory::make("capsfilter")
-            .property(
-                "caps",
-                gst::Caps::builder("video/x-raw")
-                    .field("framerate", Fraction::new(30, 1))
-                    .field("format", "RGBA")
-                    .build(),
-            )
-            .build()?;
-
-        fpsdisplaysink.set_property("video-sink", &appsink);
-
-        sinkbin.add_many([
-            &aspectratiocrop,
-            &videorate,
-            &capsframerate,
-            &videoconvertscale,
-            &fpsdisplaysink,
-        ])?;
-
-        gst::Element::link_many([
-            &aspectratiocrop,
-            &videorate,
-            &capsframerate,
-            &videoconvertscale,
-            &fpsdisplaysink,
-        ])?;
-
-        let pad = aspectratiocrop.static_pad("sink").unwrap();
-        let ghost_pad = GhostPad::builder_with_target(&pad)?.build();
-        ghost_pad.set_active(true)?;
-        sinkbin.add_pad(&ghost_pad)?;
-
-        playbin.set_property("video-sink", &sinkbin);
-        playbin.set_property("audio-sink", &audiosink);
-
-        Ok((
-            playbin,
-            pad,
-            appsink.downcast::<gst_app::AppSink>().unwrap(),
-        ))
-    }
-
     pub(crate) fn new<S>(size: S) -> Result<Self, anyhow::Error>
     where
         S: Into<PhysicalSize<u32>>,
@@ -179,14 +72,14 @@ impl Video {
         }
 
         let (pipeline, pad, appsink) = Self::create_pipeline(
-            "https://gstreamer.freedesktop.org/media/sintel_trailer-480p.webm",
+            "file:///Users/leejihyek1267/Downloads/sample.mp4",
+            // "https://gstreamer.freedesktop.org/media/sintel_trailer-480p.webm",
             size,
         )
         .unwrap();
         let bus = pipeline.bus().unwrap();
 
-        let frame = Arc::new(Mutex::new(Vec::new()));
-        let frame_ref = frame.clone();
+        let (frame_tx, frame_rx) = tokio::sync::watch::channel(None);
 
         let need_render = Arc::new(AtomicBool::new(false));
         let need_render_ref = need_render.clone();
@@ -209,13 +102,19 @@ impl Video {
                             gst::FlowError::NotNegotiated
                         })?;
 
-                    let mut f = frame_ref.lock().unwrap();
                     let buf = sample.buffer_owned().take().unwrap();
+                    /*
+                    let mut f = frame_ref.lock().unwrap();
 
                     if f.len() != buf.size() {
                         f.resize(buf.size(), 0);
                     }
                     buf.copy_to_slice(0, &mut f).unwrap();
+                    */
+
+                    frame_tx
+                        .send(Some(buf.map_readable().unwrap().to_vec()))
+                        .unwrap();
 
                     need_render_ref.store(true, Ordering::Release);
 
@@ -236,13 +135,14 @@ impl Video {
             appsink,
             bus: Arc::new(bus),
             surface_size: size,
-            frame,
+            frame_rx,
             repeat: true,
             need_render,
             framerate: framerate.numer() as f64 / framerate.denom() as f64,
         })
     }
 
+    #[inline]
     pub(crate) fn rewind(&mut self) -> Result<(), anyhow::Error> {
         self.pipeline
             .seek_simple(gst::SeekFlags::FLUSH, gst::ClockTime::from_seconds(0))
@@ -254,15 +154,14 @@ impl Video {
 
         let bus = self.bus.clone();
 
-        while let Some(msg) = bus.timed_pop_filtered(
-            gst::ClockTime::from_mseconds(2),
-            &[gst::MessageType::Eos, gst::MessageType::Error],
-        ) {
+        bus.iter().try_for_each(|msg| {
             match msg.view() {
                 Eos(_eos) => {
+                    // TODO(l3nemy): Handle EOS appropriately
                     if self.repeat {
                         self.rewind()?;
                     }
+                    Ok(())
                 }
                 // TODO(l3nemy): Handle error(Connection closed)
                 Error(e) => Err(anyhow::anyhow!(
@@ -270,18 +169,23 @@ impl Video {
                     e.src().map(|s| s.path_string()),
                     e.error(),
                     e.debug()
-                ))?,
-                _ => {}
+                )),
+                _ => Ok(()),
             }
-        }
-        Ok(())
+        })
     }
 
     pub(crate) fn render(&self, frame: &mut [u8]) -> bool {
         if self.need_render() {
             self.need_render.store(false, Ordering::Release);
-            frame.swap_with_slice(self.frame.lock().unwrap().as_mut());
-            true
+
+            if let Some(f) = self.frame_rx.borrow().as_ref() {
+                frame.copy_from_slice(f.as_slice());
+                true
+            } else {
+                // Before initialization of stream
+                false
+            }
         } else {
             false
         }
@@ -295,7 +199,104 @@ impl Video {
         self.update()
     }
 
+    #[inline]
     pub(crate) fn need_render(&self) -> bool {
         self.need_render.load(Ordering::Acquire)
+    }
+
+    fn enable_factory(name: &str, enable: bool) -> bool {
+        let registry = gst::Registry::get();
+        if let Some(factory) = ElementFactory::find(name) {
+            let factory = factory.upcast::<gst::PluginFeature>();
+            if enable {
+                factory.set_rank(gst::Rank::Primary + 4);
+            } else {
+                factory.set_rank(gst::Rank::None);
+            }
+            registry.add_feature(&factory).is_ok()
+        } else {
+            false
+        }
+    }
+
+    fn create_pipeline<S>(
+        uri: &str,
+        size: S,
+    ) -> Result<(gst::Pipeline, gst::Pad, gst_app::AppSink), anyhow::Error>
+    where
+        S: Into<PhysicalSize<u32>>,
+    {
+        let size: PhysicalSize<u32> = size.into();
+        // {playbin} -> {sinkbin} ({aspectratiocrop} -> {videoconvertscale} -> {videorate} -> {appsink})
+
+        // playbin uri={uri} video-sink="aspectratiocrop aspect-ratio={width}/{height} ! videoconvertscale ! videorate ! appsink" audio-sink="autoaudiosink"
+
+        let playbin = ElementFactory::make("playbin")
+            .property("uri", uri)
+            .build()?
+            .downcast::<gst::Pipeline>()
+            .unwrap();
+
+        let audiosink = ElementFactory::make("autoaudiosink").build()?;
+
+        let sinkbin = gst::Bin::builder().name("sinkbin").build();
+
+        let caps = VideoCapsBuilder::new()
+            //.framerate(Fraction::from(60))
+            .width(size.width as _)
+            .height(size.height as _)
+            .pixel_aspect_ratio(Fraction::new(1, 1))
+            .format(gst_video::VideoFormat::Rgba)
+            .framerate(Fraction::new(30, 1))
+            .build();
+
+        let aspectratiocrop = ElementFactory::make("aspectratiocrop")
+            .property(
+                "aspect-ratio",
+                Fraction::new(size.width as _, size.height as _),
+            )
+            .build()?;
+        let videoconvertscale = ElementFactory::make("videoconvertscale").build()?;
+        let videorate = ElementFactory::make("videorate").build()?;
+
+        let fpsdisplaysink = ElementFactory::make("fpsdisplaysink").build()?;
+
+        let appsink = gst_app::AppSink::builder()
+            .enable_last_sample(true)
+            .caps(&caps)
+            .async_(true)
+            .sync(false)
+            .build()
+            .upcast::<gst::Element>();
+
+        fpsdisplaysink.set_property("video-sink", &appsink);
+
+        sinkbin.add_many([
+            &aspectratiocrop,
+            &videorate,
+            &videoconvertscale,
+            &fpsdisplaysink,
+        ])?;
+
+        gst::Element::link_many([
+            &aspectratiocrop,
+            &videorate,
+            &videoconvertscale,
+            &fpsdisplaysink,
+        ])?;
+
+        let pad = aspectratiocrop.static_pad("sink").unwrap();
+        let ghost_pad = GhostPad::builder_with_target(&pad)?.build();
+        ghost_pad.set_active(true)?;
+        sinkbin.add_pad(&ghost_pad)?;
+
+        playbin.set_property("video-sink", &sinkbin);
+        playbin.set_property("audio-sink", &audiosink);
+
+        Ok((
+            playbin,
+            pad.upcast(),
+            appsink.downcast::<gst_app::AppSink>().unwrap(),
+        ))
     }
 }
