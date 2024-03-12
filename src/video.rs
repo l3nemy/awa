@@ -72,8 +72,7 @@ impl Video {
         }
 
         let (pipeline, pad, appsink) = Self::create_pipeline(
-            "file:///Users/leejihyek1267/Downloads/sample.mp4",
-            // "https://gstreamer.freedesktop.org/media/sintel_trailer-480p.webm",
+            "https://gstreamer.freedesktop.org/media/sintel_trailer-480p.webm",
             size,
         )
         .unwrap();
